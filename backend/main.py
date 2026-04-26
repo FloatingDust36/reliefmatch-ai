@@ -5,6 +5,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
+from app.models import models  # noqa — registers models with SQLAlchemy Base
 
 # Validate environment variables on startup — fail fast if something is missing
 settings.validate()
