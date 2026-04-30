@@ -13,8 +13,8 @@ settings.validate()
 app = FastAPI(
     title=settings.PROJECT_NAME,
     version=settings.VERSION,
-    docs_url="/docs",       # Swagger UI — your best friend during development
-    redoc_url="/redoc",     # Alternative API docs
+    docs_url="/docs",  # Swagger UI — your best friend during development
+    redoc_url="/redoc",  # Alternative API docs
 )
 
 # CORS — allows your React frontend (localhost:5173) to call this backend.
@@ -27,10 +27,27 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ── Register Routers ──────────────────────────────────────────────────────────
+# Import here (not at top of file) to keep import errors close to where they're used.
+# All routes are prefixed with /api/v1 per Doc 4.
+
+from app.api import auth, users  # noqa: E402
+
+app.include_router(auth.router, prefix=settings.API_V1_PREFIX)
+app.include_router(users.router, prefix=settings.API_V1_PREFIX)
+
+# Week 4 onward — uncomment as you build each router:
+# from app.api import events, reports, supplies, allocations, public
+# app.include_router(events.router, prefix=settings.API_V1_PREFIX)
+# app.include_router(reports.router, prefix=settings.API_V1_PREFIX)
+# app.include_router(supplies.router, prefix=settings.API_V1_PREFIX)
+# app.include_router(allocations.router, prefix=settings.API_V1_PREFIX)
+# app.include_router(public.router, prefix=settings.API_V1_PREFIX)
+
 
 @app.get("/")
 def root():
-    """Health check endpoint — used by Koyeb to verify the app is running."""
+    """Health check endpoint — used by Render to verify the app is running."""
     return {
         "project": settings.PROJECT_NAME,
         "version": settings.VERSION,
