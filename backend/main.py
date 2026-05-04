@@ -21,7 +21,7 @@ app = FastAPI(
 # In production, replace "*" with your actual Vercel domain.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "https://*.vercel.app"],
+    allow_origins=["http://localhost:5173", "https://reliefmatch-ai.vercel.app"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
