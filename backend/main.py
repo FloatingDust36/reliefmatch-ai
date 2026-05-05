@@ -31,17 +31,17 @@ app.add_middleware(
 # Import here (not at top of file) to keep import errors close to where they're used.
 # All routes are prefixed with /api/v1 per Doc 4.
 
-from app.api import auth, users, events, reports, supplies  # noqa: E402
+from app.api import auth, users, events, reports, supplies, allocations  # noqa: E402
 
 app.include_router(auth.router, prefix=settings.API_V1_PREFIX)
 app.include_router(users.router, prefix=settings.API_V1_PREFIX)
 app.include_router(events.router, prefix=settings.API_V1_PREFIX)
 app.include_router(reports.router, prefix=settings.API_V1_PREFIX)
 app.include_router(supplies.router, prefix=settings.API_V1_PREFIX)
+app.include_router(allocations.router, prefix=settings.API_V1_PREFIX)
 
 # Week 4 onward — uncomment as you build each router:
-# from app.api import allocations, public
-# app.include_router(allocations.router, prefix=settings.API_V1_PREFIX)
+# from app.api import public
 # app.include_router(public.router, prefix=settings.API_V1_PREFIX)
 
 
