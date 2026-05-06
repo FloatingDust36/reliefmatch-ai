@@ -41,6 +41,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user, require_role
 from app.core.database import get_db
 from app.ml.predictor import score_barangays
+from app.ml.optimizer import solve_cvrp
 from app.models.models import (
     Allocation,
     Barangay,
@@ -118,25 +119,31 @@ def _build_response(alloc: Allocation, db: Session) -> AllocationResponse:
 def _allocate_supplies(
     scored_barangays: list[dict],
     supplies: list[SupplyInventory],
+    depot_lat: float,
+    depot_lon: float,
 ) -> list[dict]:
     """
-    Proportional supply allocator — placeholder for Week 7's OR-Tools CVRP.
+    OR-Tools CVRP routing + proportional quantity allocation.
 
-    Logic:
-    - Pool all supplies by goods_type
-    - Distribute each goods_type proportionally by priority_score
-    - Every barangay gets at least one allocation row per goods_type available
-    - Quantities are rounded to 1 decimal place (kg/packs precision)
-
-    WHY proportional and not equal split?
-    Equal split ignores urgency — Mambaling (score 71) and Lahug (score 6)
-    would get the same food packs. Proportional allocation ensures the
-    AI's risk scoring actually drives the distribution decision.
+    Step 1 — Run CVRP to get optimal delivery order and truck assignment.
+    Step 2 — Pool all supplies by goods_type, summing across ALL sources.
+             (Fixes the Week 6 bug where only the first supply_id per
+             goods_type was used — multiple donations now all count.)
+    Step 3 — Distribute quantities proportionally by priority_score.
+    Step 4 — Return one allocation row per barangay per goods_type,
+             with delivery_order and truck_id attached.
     """
     if not scored_barangays or not supplies:
         return []
 
-    # Group supplies by goods_type, summing available quantity
+    # ── Step 1: OR-Tools routing ──────────────────────────────────────────────
+    scored_barangays = solve_cvrp(depot_lat, depot_lon, scored_barangays)
+
+    # ── Step 2: Pool supplies by goods_type, keep all source IDs ─────────────
+    # WHY keep all source IDs? Each SupplyInventory row is a separate donation
+    # with its own warehouse location. We use the first source_id for the FK
+    # in allocations (one row per barangay per goods_type) but sum all quantities.
+    # OR-Tools Week 7+ extension: route from each warehouse separately.
     supply_pool: dict[str, dict] = {}
     for s in supplies:
         gt = s.goods_type
@@ -144,10 +151,10 @@ def _allocate_supplies(
             supply_pool[gt] = {"supply_id": s.id, "total_qty": 0.0}
         supply_pool[gt]["total_qty"] += float(s.quantity)
 
-    # Total score across all barangays — used as denominator for proportions
+    # ── Step 3: Proportional distribution by priority_score ──────────────────
     total_score = sum(b["priority_score"] for b in scored_barangays)
     if total_score == 0:
-        total_score = 1  # avoid division by zero if all scores are 0
+        total_score = 1
 
     allocations = []
     for barangay in scored_barangays:
@@ -166,6 +173,10 @@ def _allocate_supplies(
                     "priority_score": barangay["priority_score"],
                     "priority_rank": barangay["priority_rank"],
                     "shap_explanation": barangay["shap_explanation"],
+                    "delivery_order": barangay.get(
+                        "delivery_order", barangay["priority_rank"]
+                    ),
+                    "truck_id": barangay.get("truck_id", 0),
                 }
             )
 
@@ -230,6 +241,9 @@ def run_allocation(
                 # Barangay metadata → vulnerability_index feature
                 "poverty_incidence_pct": float(barangay.poverty_incidence_pct or 19.5),
                 "historical_disaster_count": barangay.historical_disaster_count or 0,
+                # Coordinates → OR-Tools CVRP routing
+                "latitude": float(barangay.latitude),
+                "longitude": float(barangay.longitude),
             }
         )
 
@@ -260,10 +274,18 @@ def run_allocation(
     ).delete(synchronize_session=False)
 
     # ── Step 6: Proportional allocation → write to DB ─────────────────────────
-    allocation_plans = _allocate_supplies(scored, supplies)
+    # Use first supply's warehouse as the depot for OR-Tools routing
+    depot_lat = float(supplies[0].warehouse_latitude)
+    depot_lon = float(supplies[0].warehouse_longitude)
+    allocation_plans = _allocate_supplies(scored, supplies, depot_lat, depot_lon)
 
     new_allocations = []
     for plan in allocation_plans:
+        # Append routing info to the SHAP explanation — no schema change needed
+        explanation = (
+            f"{plan['shap_explanation']} "
+            f"[Truck {plan['truck_id'] + 1}, Stop {plan['delivery_order']}]"
+        )
         alloc = Allocation(
             disaster_event_id=event_id,
             barangay_id=plan["barangay_id"],
@@ -271,7 +293,7 @@ def run_allocation(
             quantity_allocated=plan["quantity_allocated"],
             priority_score=plan["priority_score"],
             priority_rank=plan["priority_rank"],
-            shap_explanation=plan["shap_explanation"],
+            shap_explanation=explanation,
             status="recommended",
         )
         db.add(alloc)
